@@ -3,6 +3,9 @@ rust + cron = crust!
 
 A cron manager in rust, since the cool new thing is remaking old linux utilities in rust!
 
+WARNING!
+Has not yet been extensively tested!
+
 # Installing
 Simply clone the repository and run `cargo build --release` in the project directory.
 The executable will then be built to `./target/release/crust`.
