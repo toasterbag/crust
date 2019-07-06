@@ -3,17 +3,35 @@ use crate::*;
 pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
     let mut entries = Vec::new();
     for (line, entry) in crontab.lines().enumerate() {
+        let mut entry = entry.trim();
         // Remove all comments
-        if entry.starts_with("#") {
+        if entry.starts_with("#") || entry.is_empty() {
             //println!("Comment: {}", entry);
             continue;
+        }
+
+        // Convert the nonstandard defenitions to normal form
+        if entry.starts_with("@") {
+            // Reboot is a special case as there is no normal form equivalent
+            if entry.split_whitespace().nth(0).unwrap() == "reboot" {
+                if let Some(cmd) = entry.split_whitespace().nth(1) {
+                    return vec![CronEntry::new_startup_task(cmd)];
+                }
+                println!(
+                    "Parse error: Missing command after predicate, line {}: {}",
+                    line, entry
+                );
+                std::process::exit(1);
+            }
+            let entry = parse_special_expression(entry, line);
+            return parse_crontab(&entry);
         }
 
         // println!("{}", entry);
 
         let mut intervals = Vec::with_capacity(5);
         for (index, expr) in entry.split_whitespace().take(5).enumerate() {
-            use CronExprKind::*;
+            use CronUnit::*;
             let cron_expr_kind = match index {
                 0 => Minute,
                 1 => Hour,
@@ -41,6 +59,7 @@ pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
             dom: intervals[2].clone(),
             month: intervals[3].clone(),
             dow: intervals[4].clone(),
+            startup: false,
             cmd: str_vec.join(" "),
         };
         entries.push(e);
@@ -48,9 +67,9 @@ pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
     return entries;
 }
 
-fn parse_cron_time(kind: &CronExprKind, expr: &str, line: usize) -> Option<CronInterval> {
+fn parse_cron_time(unit: &CronUnit, expr: &str, line: usize) -> Option<CronInterval> {
     use CronInterval::*;
-    let (min, max) = kind.bounds();
+    let (min, max) = unit.bounds();
 
     //println!("{}", expr);
     // Handle comma-separated expressions "15,5-10"
@@ -63,9 +82,9 @@ fn parse_cron_time(kind: &CronExprKind, expr: &str, line: usize) -> Option<CronI
         // Parse "fraction" expressions "*/5"
         else if sub_expr.starts_with("*/") {
             let sub_expr = sub_expr.replace("*/", "");
-            match sub_expr.parse::<u8>() {
+            match sub_expr.parse::<u32>() {
                 Ok(n) => {
-                    let mut points: Vec<u8> = (min..max).filter(|x| x % n == 0).collect();
+                    let mut points: Vec<u32> = (min..max).filter(|x| x % n == 0).collect();
                     time_points.append(&mut points);
                 }
                 Err(..) => {
@@ -81,8 +100,8 @@ fn parse_cron_time(kind: &CronExprKind, expr: &str, line: usize) -> Option<CronI
         else if sub_expr.contains("-") {
             let values: Vec<&str> = sub_expr.split("-").take(2).collect();
             // TODO handle panics here
-            let start = values[0].parse::<u8>();
-            let stop = values[1].parse::<u8>();
+            let start = values[0].parse::<u32>();
+            let stop = values[1].parse::<u32>();
 
             if start.is_err() || stop.is_err() {
                 println!(
@@ -134,12 +153,12 @@ fn parse_cron_time(kind: &CronExprKind, expr: &str, line: usize) -> Option<CronI
                 std::process::exit(1);
             }
 
-            let mut points: Vec<u8> = (start..stop + 1).collect();
+            let mut points: Vec<u32> = (start..stop + 1).collect();
             time_points.append(&mut points);
         }
         // Parse "single" expression "5"
         else {
-            match sub_expr.parse::<u8>() {
+            match sub_expr.parse::<u32>() {
                 Ok(n) if n >= min && n <= max => {
                     time_points.push(n);
                 }
@@ -170,6 +189,32 @@ fn parse_cron_time(kind: &CronExprKind, expr: &str, line: usize) -> Option<CronI
     return None;
 }
 
-fn is_out_of_bounds(x: u8, min: u8, max: u8) -> bool {
+fn parse_special_expression(expr: &str, line: usize) -> String {
+    if let Some(index) = expr.find(|c: char| c.is_whitespace()) {
+        let (predicate, cmd) = expr.split_at(index);
+        match predicate {
+            "@yearly" | "@annually" => return vec!["0 0 1 1 *", cmd].join(" "),
+            "@monthly" => return vec!["0 0 1 * *", cmd].join(" "),
+            "@weekly" => return vec!["0 0 * * 0", cmd].join(" "),
+            "@daily" | "@midnight" => return vec!["0 0 * * *", cmd].join(" "),
+            "@hourly" => return vec!["0 * * * *", cmd].join(" "),
+            _ => {
+                println!(
+                    "Parse error: Unknown scheduling: {}, line {}",
+                    predicate, line
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    println!(
+        "Parse error: Error parsing command after predicate, line {}: {}",
+        line, expr
+    );
+    std::process::exit(1);
+}
+
+fn is_out_of_bounds(x: u32, min: u32, max: u32) -> bool {
     !(x >= min && x <= max)
 }

@@ -18,7 +18,7 @@ struct Args {
 }
 
 #[derive(Debug)]
-pub enum CronExprKind {
+pub enum CronUnit {
     Minute,
     Hour,
     DayOfMonth,
@@ -26,31 +26,42 @@ pub enum CronExprKind {
     DayOfWeek,
 }
 
-impl CronExprKind {
-    pub fn bounds(&self) -> (u8, u8) {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CronInterval {
+    Every,
+    Multiple(Vec<u32>),
+}
+
+pub struct CronExpr (CronUnit, CronInterval);
+
+impl CronUnit {
+    pub fn bounds(&self) -> (u32, u32) {
+        use CronUnit::*;
         match self {
-            CronExprKind::Minute => (0, 59),
-            CronExprKind::Hour => (0, 23),
-            CronExprKind::DayOfMonth => (1, 31),
-            CronExprKind::Month => (1, 12),
-            CronExprKind::DayOfWeek => (0, 6),
+            Minute => (0, 59),
+            Hour => (0, 23),
+            DayOfMonth => (1, 31),
+            Month => (1, 12),
+            DayOfWeek => (0, 6),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CronInterval {
-    Every,
-    Multiple(Vec<u8>),
-}
-
 impl CronInterval {
-    pub fn distance(interval: &CronInterval, current: u8, kind: CronExprKind) -> u8 {
+    pub fn last(&self, kind: CronUnit) -> u32 {
+        let (min, max) = kind.bounds();
+        match self {
+            CronInterval::Every => max,
+            CronInterval::Multiple(v) => *v.iter().rev().nth(0).unwrap(),
+        }
+    }
+
+    pub fn distance(interval: &CronInterval, current: u32, kind: CronUnit) -> u32 {
         let (min, max) = kind.bounds();
         match interval {
             CronInterval::Every => 0,
             CronInterval::Multiple(v) => {
-                let remainder: Vec<u8> = v
+                let remainder: Vec<u32> = v
                     .iter()
                     .filter(|x| **x > current)
                     .map(|x| x.clone())
@@ -61,12 +72,12 @@ impl CronInterval {
 
                 // Kill me
                 return ((current as i32 - max as i32) as i32 + (*v.iter().nth(0).unwrap()) as i32)
-                    as u8;
+                    as u32;
             }
         }
     }
 
-    pub fn closest(interval: &CronInterval, current: u8, kind: CronExprKind) -> Option<u8> {
+    pub fn closest(interval: &CronInterval, current: u32, kind: CronUnit) -> Option<u32> {
         let (min, max) = kind.bounds();
         match interval {
             CronInterval::Every => None,
@@ -80,72 +91,46 @@ impl CronInterval {
             }
         }
     }
-    // TODO Probably really inefficient method of combining two intervals
-    /*
-    pub fn combine(&self, other: CronInterval) -> CronInterval {
-        use CronInterval::*;
-        match self {
-            Every => Every,
-            Multiple(v1) => match other {
-                Every => Every,
-                Multiple(v2) => {
-                    let mut v = v1.clone();
-                    let mut v2 = v2.clone();
-                    v.append(&mut v2);
-                    Multiple(v)
-                }
-            },
-        }
-    }
-    */
 }
 
 #[derive(Clone, Debug)]
 pub struct CronEntry {
-    minute: CronInterval,
-    hour: CronInterval,
-    dom: CronInterval,
-    month: CronInterval,
-    dow: CronInterval,
+    minute: CronExpr,
+    hour: CronExpr,
+    dom: CronExpr,
+    month: CronExpr,
+    dow: CronExpr,
+    startup: bool,
     cmd: String,
 }
 
 impl CronEntry {
-    pub fn next_execution(&self) -> usize {
+    pub fn new_startup_task(cmd: &str) -> CronEntry {
+        CronEntry {
+            minute: CronExpr(CronUnit::Minute, CronInterval::Every),
+            hour: CronExpr(CronUnit::Hour, CronInterval::Every),
+            dom: CronExpr(CronUnit::DayOfMonth, CronInterval::Every),
+            month: CronExpr(CronUnit::Month, CronInterval::Every),
+            dow: CronExpr(CronUnit::DayOfWeek, CronInterval::Every),
+            startup: true,
+            cmd: cmd.to_owned(),
+        }
+    }
+
+    pub fn next_attempt(&self) -> usize {
         let now = Local::now();
-        let mut future = now.with_second(0).unwrap();
 
-        let next = CronInterval::closest(&self.minute, now.minute() as u8, CronExprKind::Minute);
-        if let Some(t) = next {
-            future = future.with_minute((t) as u32).unwrap();
-        } else {
-            future = future.with_minute(now.minute() + 1).unwrap();
+        let correct_month = match &self.month {
+            CronInterval::Every => true,
+            CronInterval::Multiple(v) => v.contains(&now.month()),
+        };
+
+        if !correct_month {
+            let mut future = now.clone();
+            if now.month() > self.month.last().unwrap() {
+
+            }
         }
-
-        let next = CronInterval::closest(&self.hour, now.hour() as u8, CronExprKind::Hour);
-        if let Some(t) = next {
-            future = future.with_hour(t as u32).unwrap();
-        }
-
-        /*
-        let delta = CronInterval::distance(
-            &self.dow,
-            now.weekday().num_days_from_sunday() as u8,
-            CronExprKind::DayOfWeek,
-        );
-        future = future + Duration::days(delta as i64);
-        */
-        // This will sometimes result in faulty values so we do an extra
-        // check when we wake up again
-        // NEW NOTICE: I abandoned the idea to calculate such distant times
-        // months are not easy to work with..
-        /*
-        let delta = CronInterval::distance(&self.dom, now.day() as u8, CronExprKind::DayOfMonth);
-        future = future + Duration::days(delta as i64);
-
-        let delta = CronInterval::distance(&self.month, now.month() as u8, CronExprKind::Month);
-        future = future + Duration::months(delta as i64);
-        */
 
         return (future - now).num_seconds() as usize;
     }
@@ -155,22 +140,23 @@ impl CronEntry {
 
         let correct_month = match &self.month {
             CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.month() as u8)),
+            CronInterval::Multiple(v) => v.contains(&(now.month())),
         };
 
         let correct_dow = match &self.dow {
             CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.weekday().num_days_from_sunday() as u8)),
+            CronInterval::Multiple(v) => v.contains(&(now.weekday().num_days_from_sunday())),
         };
 
         let correct_dom = match &self.dom {
             CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.day() as u8)),
+            CronInterval::Multiple(v) => v.contains(&(now.day())),
         };
 
         return correct_month && correct_dow && correct_dom;
-
     }
+
+    fn next_day(target: u32) {}
 }
 
 fn main() {
@@ -188,7 +174,12 @@ fn main() {
         }
 
         for child in handles {
-            child.join().expect("NO error?");
+
+            match child.join() {
+                Ok(_) => continue,
+                Err(_) => continue,
+
+            }
         }
 
     }
@@ -234,11 +225,7 @@ fn read_crontab(path: &String) -> std::io::Result<String> {
 fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
     let entry = (*entry).clone();
     thread::spawn(move || loop {
-        let next_time = entry.next_execution();
-        let now = Local::now() + Duration::seconds(next_time as i64);
-        //println!("Scheduling: `{}` for {}", entry.cmd, now);
-        sleep(Duration::seconds(next_time as i64).to_std().unwrap());
-        if entry.is_correct_day() {
+        if entry.startup {
             let output = Command::new("/bin/sh")
                 .arg("-c")
                 .arg(&entry.cmd)
@@ -246,7 +233,18 @@ fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
                 .expect("failed to execute process");
             //println!("{}", String::from_utf8(output.stdout).unwrap());
             //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
+            break;
         }
+        let next_time = entry.next_attempt();
+        let future = Local::now() + Duration::seconds(next_time as i64);
+        println!("Scheduling: `{}` for {}", entry.cmd, future);
+        let t = Duration::seconds(next_time as i64).to_std().unwrap();
+        sleep(t);
 
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&entry.cmd)
+            .output()
+            .expect("failed to execute process");
     })
 }
