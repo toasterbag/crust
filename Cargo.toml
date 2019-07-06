@@ -1,0 +1,9 @@
+[package]
+name = "crust"
+version = "0.1.0"
+authors = ["David Hedgren <david@davebay.net>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.33.0"
+chrono = "0.4.7"
