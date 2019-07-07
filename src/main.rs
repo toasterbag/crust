@@ -34,6 +34,26 @@ pub struct CronEntry {
     cmd: String,
 }
 
+fn is_leap_year(year: i32) -> bool {
+    ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0)
+}
+
+fn month_length(date: &DateTime<Local>) -> u32 {
+    match date.month() {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => match is_leap_year(date.year()) {
+            true => 29,
+            false => 28,
+        },
+        _ => unimplemented!(),
+    }
+}
+
+fn month_has_day(date: &DateTime<Local>, day: u32) -> bool {
+    month_length(date) >= day
+}
+
 impl CronEntry {
     pub fn new_startup_task(cmd: &str) -> CronEntry {
         CronEntry {
@@ -47,15 +67,103 @@ impl CronEntry {
         }
     }
 
-    pub fn next_attempt(&self, now: DateTime<Local>) -> DateTime<Local> {
-        //println!("{}", now);
+    pub fn next_execution(&self, mut now: DateTime<Local>) -> DateTime<Local> {
+        loop {
+            if self.minute.is_multiple() && !self.minute.contains(now.minute()) {
+                let minute = self.minute.next_from(now.minute());
+                if minute < now.minute() {
+                    now = now + Duration::hours(1);
+                }
+                now = now.with_minute(minute).unwrap();
+            }
 
-        let date = self.next_date(now.date());
-        let time = self.next_time(now);
-        //println!("{}", date);
-        //println!("{}", time);
+            if self.hour.is_multiple() && !self.minute.contains(now.minute()) {
+                let hour = self.hour.next_from(now.hour());
+                if hour < now.hour() {
+                    now = now.with_hour(hour).unwrap().with_minute(0).unwrap();
+                    now = now + Duration::days(1);
+                    continue;
+                }
+                now = now.with_hour(hour).unwrap().with_minute(0).unwrap();
+                continue;
+            }
 
-        return date.and_hms_nano(time.hour(), time.minute(), 0, 0);
+            let weekday = now.weekday().num_days_from_sunday();
+            if self.dow.is_multiple() && !self.dow.contains(weekday) {
+                let delta = (self.dow.next_from(weekday) as i64 - weekday as i64 + 7) % 7;
+                now = now + Duration::days(delta);
+                now = now.with_hour(0).unwrap().with_minute(0).unwrap();
+                continue;
+            }
+
+            let next_month = now.month() % 12 + 1;
+            if self.dom.is_multiple() && !self.dom.contains(now.day()) {
+                let day = self.dom.next_from(now.day());
+                if day < now.day() || month_has_day(&now.with_month(next_month).unwrap(), day) {
+                    let len = month_length(&now);
+                    let days_left_in_month = len - now.day() + 1;
+                    now = now + Duration::days(days_left_in_month as i64);
+                    now = now
+                        .with_day(1)
+                        .unwrap()
+                        .with_hour(0)
+                        .unwrap()
+                        .with_minute(0)
+                        .unwrap();
+                    continue;
+                }
+                now = now
+                    .with_day(day)
+                    .unwrap()
+                    .with_hour(0)
+                    .unwrap()
+                    .with_minute(0)
+                    .unwrap();
+                continue;
+            }
+
+            if self.month.is_multiple() && !self.month.contains(now.month()) {
+                let month = self.month.next_from(now.month());
+                if month < now.month() {
+                    let months_to_add = 12 - now.month() + month;
+                    let next_month = now.month() + months_to_add;
+                    if next_month > 12 {
+                        now.with_year(now.year() + 1)
+                            .unwrap()
+                            .with_month(next_month % 13 + 1)
+                            .unwrap()
+                            .with_day(1)
+                            .unwrap()
+                            .with_hour(0)
+                            .unwrap()
+                            .with_minute(0)
+                            .unwrap();
+                        continue;
+                    }
+                    now.with_month(next_month)
+                        .unwrap()
+                        .with_day(1)
+                        .unwrap()
+                        .with_hour(0)
+                        .unwrap()
+                        .with_minute(0)
+                        .unwrap();
+                    continue;
+                }
+                now.with_month(month)
+                    .unwrap()
+                    .with_day(1)
+                    .unwrap()
+                    .with_hour(0)
+                    .unwrap()
+                    .with_minute(0)
+                    .unwrap();
+                continue;
+            }
+            break;
+        }
+
+        return now.with_second(0).unwrap().with_nanosecond(0).unwrap();
     }
 
     fn is_hourly(&self) -> bool {
@@ -65,77 +173,6 @@ impl CronEntry {
     fn date_matters(&self) -> bool {
         (self.minute.is_every() || self.hour.is_every())
             && (self.month.is_multiple() || self.dom.is_multiple() || self.dow.is_multiple())
-    }
-
-    fn next_date(&self, now: Date<Local>) -> Date<Local> {
-        if !self.month.contains(now.month()) {
-            let next_month = self.month.next_from(now.month());
-            if next_month <= now.month() {
-                return self.next_date(
-                    now.with_year(now.year() + 1)
-                        .unwrap()
-                        .with_month(next_month)
-                        .unwrap()
-                        .with_day(1)
-                        .unwrap(),
-                );
-            }
-            return self.next_date(now.with_month(next_month).unwrap().with_day(1).unwrap());
-        }
-
-        if !self.dom.contains(now.day()) {
-            let next_day = self.dom.next_from(now.day());
-            if next_day > now.day() && next_day <= 28 {
-                return self.next_date(now.with_day(next_day).unwrap());
-            }
-            return self.next_date(now + Duration::days(1));
-        }
-
-        /*
-        let mut future = now.date();
-        let weekday = future.weekday().num_days_from_sunday();
-        if !self.dow.contains(weekday) {
-            let delta = self.dow.next_from(weekday);
-            let delta = Duration::days((weekday - 6 + delta) as i64);
-            future = future + delta;
-        }*/
-
-        if now <= Local::now().date() && self.date_matters() {
-            return self.next_date(now + Duration::days(1));
-        }
-
-        return now;
-    }
-
-    fn next_hour(&self, now: u32) -> u32 {
-        if !self.hour.contains(now) {
-            let next_hour = self.hour.next_from(now);
-            if next_hour <= now {
-                return self.next_hour((now + 1) % 24);
-            }
-            return next_hour;
-        } else if self.is_hourly() {
-            return (now + 1) % 24;
-        }
-        return now;
-    }
-
-    fn next_time(&self, now: DateTime<Local>) -> DateTime<Local> {
-        let hour = self.next_hour(now.hour());
-
-        let mut now = now.with_hour(hour).unwrap();
-
-        let mut minute = now.minute();
-        while !self.minute.contains(minute) {
-            let next_minute = self.minute.next_from(now.minute());
-            if next_minute <= minute {
-                now = now + Duration::hours(1);
-                minute = next_minute;
-            }
-            minute = minute + 1;
-        }
-
-        return now.with_minute(minute).unwrap();
     }
 }
 
@@ -210,7 +247,7 @@ fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
             //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
             //break;
         }
-        let future = entry.next_attempt(Local::now() + Duration::minutes(1));
+        let future = entry.next_execution(Local::now() + Duration::minutes(1));
         println!("Scheduling: `{}` for {}", entry.cmd, future);
         let t = future - Local::now();
         //sleep(t.to_std().unwrap());
@@ -221,4 +258,26 @@ fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
             .output()
             .expect("failed to execute process");
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn leap_year() {
+        assert!(is_leap_year(1804));
+        assert!(is_leap_year(1904));
+        assert!(is_leap_year(2004));
+        assert!(is_leap_year(2012));
+        assert!(is_leap_year(2016));
+        assert!(is_leap_year(2020));
+        assert!(is_leap_year(2316));
+
+        assert!(!is_leap_year(1823));
+        assert!(!is_leap_year(1825));
+        assert!(!is_leap_year(2001));
+        assert!(!is_leap_year(2002));
+        assert!(!is_leap_year(1999));
+        assert!(!is_leap_year(2000));
+    }
 }
