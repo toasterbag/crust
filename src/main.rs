@@ -236,27 +236,29 @@ fn read_crontab(path: &String) -> std::io::Result<String> {
 
 fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
     let entry = (*entry).clone();
-    thread::spawn(move || {
+    thread::spawn(move || loop {
         if entry.startup {
             let output = Command::new("/bin/sh")
                 .arg("-c")
                 .arg(&entry.cmd)
                 .output()
                 .expect("failed to execute process");
-            //println!("{}", String::from_utf8(output.stdout).unwrap());
-            //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
-            //break;
+            println!("{}", String::from_utf8(output.stdout).unwrap());
+            eprintln!("{}", String::from_utf8(output.stderr).unwrap());
+            break;
         }
         let future = entry.next_execution(Local::now() + Duration::minutes(1));
         println!("Scheduling: `{}` for {}", entry.cmd, future);
         let t = future - Local::now();
-        //sleep(t.to_std().unwrap());
+        sleep(t.to_std().unwrap());
 
         let output = Command::new("/bin/sh")
             .arg("-c")
             .arg(&entry.cmd)
             .output()
             .expect("failed to execute process");
+        println!("{}", String::from_utf8(output.stdout).unwrap());
+        eprintln!("{}", String::from_utf8(output.stderr).unwrap());
     })
 }
 
