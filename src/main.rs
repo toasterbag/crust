@@ -203,7 +203,7 @@ fn main() {
 
 fn gen_args() -> Args {
     let matches = App::new("Crust")
-        .version("0.2.0")
+        .version("0.2.1")
         .author("Karl David Hedgren. <david@davebay.net>")
         .about("rust + cron = crust!")
         .arg(
@@ -228,11 +228,6 @@ fn gen_args() -> Args {
     let xdg_config_path =
         std::env::var("XDG_CONFIG_HOME").unwrap_or(vec![home, String::from("/.config")].join(""));
     let crontab_path = config_path.replace("$XDG_CONFIG_HOME", &xdg_config_path);
-
-    if !Path::new(&crontab_path).exists() {
-        println!("Could not find crontab: {}", crontab_path);
-        std::process::exit(1);
-    }
 
     Args {
         crontab_path: String::from(crontab_path),
