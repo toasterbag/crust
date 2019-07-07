@@ -16,6 +16,6 @@ Either run it using a service manager such as systemd or put it in a user startu
 The default crontab path is $HOME/.config/crontab
 
 # Todo
-[ ] Respect xdg config directory
-[*] Add support for the non-standard predefined scheduling commands, see [this link](https://en.wikipedia.org/wiki/Cron#Nonstandard_predefined_scheduling_definitions)
-[ ] Add tests, preferably using quickcheck
+- [ ] Respect xdg config directory
+- [x] Add support for the non-standard predefined scheduling commands, see [this link](https://en.wikipedia.org/wiki/Cron#Nonstandard_predefined_scheduling_definitions)
+- [ ] Add tests, preferably using quickcheck

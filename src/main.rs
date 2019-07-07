@@ -20,7 +20,8 @@ mod expr;
 use expr::*;
 
 struct Args {
-    pub config_path: String,
+    pub crontab_path: String,
+    pub edit_flag: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -166,19 +167,22 @@ impl CronEntry {
         return now.with_second(0).unwrap().with_nanosecond(0).unwrap();
     }
 
-    fn is_hourly(&self) -> bool {
-        self.minute.is_multiple() && self.hour.is_every()
-    }
-
-    fn date_matters(&self) -> bool {
-        (self.minute.is_every() || self.hour.is_every())
-            && (self.month.is_multiple() || self.dom.is_multiple() || self.dow.is_multiple())
-    }
 }
 
 fn main() {
     let args = gen_args();
-    if let Ok(crontab) = read_crontab(&args.config_path) {
+
+    if args.edit_flag {
+        let cmd = vec!["$EDITOR", &args.crontab_path].join(" ");
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .expect("failed to edit the crontab");
+        std::process::exit(1);
+    }
+
+    if let Ok(crontab) = read_crontab(&args.crontab_path) {
         let crontab = parse_crontab(&crontab);
 
         let mut handles = Vec::new();
@@ -193,8 +197,8 @@ fn main() {
                 Err(e) => continue, //println!("{:?}", e),
             }
         }
-
     }
+
 }
 
 fn gen_args() -> Args {
@@ -203,26 +207,35 @@ fn gen_args() -> Args {
         .author("Karl David Hedgren. <david@davebay.net>")
         .about("rust + cron = crust!")
         .arg(
-            Arg::with_name("config")
+            Arg::with_name("crontab")
                 .short("c")
-                .long("config")
-                .help("Sets crontab path")
+                .long("crontab")
+                .help("Use crontab file at PATH")
                 .takes_value(true)
-                .default_value("$HOME/.config/crontab"),
+                .default_value("$XDG_CONFIG_HOME/crontab"),
+        )
+        .arg(
+            Arg::with_name("edit")
+                .short("e")
+                .long("edit")
+                .help("Open the crontab in your editor"),
         )
         .get_matches();
 
-    let config_path = matches.value_of("config").unwrap();
+    let config_path = matches.value_of("crontab").unwrap();
     let home = std::env::var("HOME").unwrap_or(String::from("/"));
-    let config_path = config_path.replace("$HOME", &home);
+    let xdg_config_path =
+        std::env::var("XDG_CONFIG_HOME").unwrap_or(vec![home, String::from("/.config")].join(""));
+    let crontab_path = config_path.replace("$XDG_CONFIG_HOME", &xdg_config_path);
 
-    if !Path::new(&config_path).exists() {
-        println!("Could not find crontab: {}", config_path);
+    if !Path::new(&crontab_path).exists() {
+        println!("Could not find crontab: {}", crontab_path);
         std::process::exit(1);
     }
 
     Args {
-        config_path: String::from(config_path),
+        crontab_path: String::from(crontab_path),
+        edit_flag: matches.is_present("edit"),
     }
 
 }

@@ -13,15 +13,17 @@ pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
         // Convert the nonstandard defenitions to normal form
         if entry.starts_with("@") {
             // Reboot is a special case as there is no normal form equivalent
-            if entry.split_whitespace().nth(0).unwrap() == "reboot" {
-                if let Some(cmd) = entry.split_whitespace().nth(1) {
-                    return vec![CronEntry::new_startup_task(cmd)];
+            if entry.split_whitespace().nth(0).unwrap() == "@reboot" {
+                let cmd: Vec<&str> = entry.split_whitespace().skip(1).collect();
+                if cmd.len() == 0 {
+                    println!(
+                        "Parse error: Missing command after predicate, line {}: {}",
+                        line, entry
+                    );
+                    std::process::exit(1);
                 }
-                println!(
-                    "Parse error: Missing command after predicate, line {}: {}",
-                    line, entry
-                );
-                std::process::exit(1);
+                entries.push(CronEntry::new_startup_task(&cmd.join(" ")));
+                continue;
             }
             entry = parse_special_expression(&entry, line);
         }
