@@ -1,3 +1,5 @@
+#[macro_use(quickcheck)]
+
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
@@ -10,87 +12,15 @@ use std::thread::JoinHandle;
 use chrono::prelude::*;
 use chrono::Duration;
 use clap::{App, Arg};
+
 mod parser;
 use parser::parse_crontab;
 
+mod expr;
+use expr::*;
+
 struct Args {
     pub config_path: String,
-}
-
-#[derive(Debug)]
-pub enum CronUnit {
-    Minute,
-    Hour,
-    DayOfMonth,
-    Month,
-    DayOfWeek,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CronInterval {
-    Every,
-    Multiple(Vec<u32>),
-}
-
-pub struct CronExpr (CronUnit, CronInterval);
-
-impl CronUnit {
-    pub fn bounds(&self) -> (u32, u32) {
-        use CronUnit::*;
-        match self {
-            Minute => (0, 59),
-            Hour => (0, 23),
-            DayOfMonth => (1, 31),
-            Month => (1, 12),
-            DayOfWeek => (0, 6),
-        }
-    }
-}
-
-impl CronInterval {
-    pub fn last(&self, kind: CronUnit) -> u32 {
-        let (min, max) = kind.bounds();
-        match self {
-            CronInterval::Every => max,
-            CronInterval::Multiple(v) => *v.iter().rev().nth(0).unwrap(),
-        }
-    }
-
-    pub fn distance(interval: &CronInterval, current: u32, kind: CronUnit) -> u32 {
-        let (min, max) = kind.bounds();
-        match interval {
-            CronInterval::Every => 0,
-            CronInterval::Multiple(v) => {
-                let remainder: Vec<u32> = v
-                    .iter()
-                    .filter(|x| **x > current)
-                    .map(|x| x.clone())
-                    .collect();
-                if !remainder.is_empty() {
-                    return *remainder.iter().nth(0).unwrap();
-                }
-
-                // Kill me
-                return ((current as i32 - max as i32) as i32 + (*v.iter().nth(0).unwrap()) as i32)
-                    as u32;
-            }
-        }
-    }
-
-    pub fn closest(interval: &CronInterval, current: u32, kind: CronUnit) -> Option<u32> {
-        let (min, max) = kind.bounds();
-        match interval {
-            CronInterval::Every => None,
-            CronInterval::Multiple(v) => {
-                let remainder = v.iter().filter(|x| **x > current).map(|x| x.clone()).nth(0);
-                if remainder.is_some() {
-                    return remainder;
-                }
-
-                return Some(v.iter().nth(0).unwrap().clone());
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -117,46 +47,96 @@ impl CronEntry {
         }
     }
 
-    pub fn next_attempt(&self) -> usize {
-        let now = Local::now();
+    pub fn next_attempt(&self, now: DateTime<Local>) -> DateTime<Local> {
+        //println!("{}", now);
 
-        let correct_month = match &self.month {
-            CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&now.month()),
-        };
+        let date = self.next_date(now.date());
+        let time = self.next_time(now);
+        //println!("{}", date);
+        //println!("{}", time);
 
-        if !correct_month {
-            let mut future = now.clone();
-            if now.month() > self.month.last().unwrap() {
+        return date.and_hms_nano(time.hour(), time.minute(), 0, 0);
+    }
 
+    fn is_hourly(&self) -> bool {
+        self.minute.is_multiple() && self.hour.is_every()
+    }
+
+    fn date_matters(&self) -> bool {
+        (self.minute.is_every() || self.hour.is_every())
+            && (self.month.is_multiple() || self.dom.is_multiple() || self.dow.is_multiple())
+    }
+
+    fn next_date(&self, now: Date<Local>) -> Date<Local> {
+        if !self.month.contains(now.month()) {
+            let next_month = self.month.next_from(now.month());
+            if next_month <= now.month() {
+                return self.next_date(
+                    now.with_year(now.year() + 1)
+                        .unwrap()
+                        .with_month(next_month)
+                        .unwrap()
+                        .with_day(1)
+                        .unwrap(),
+                );
             }
+            return self.next_date(now.with_month(next_month).unwrap().with_day(1).unwrap());
         }
 
-        return (future - now).num_seconds() as usize;
+        if !self.dom.contains(now.day()) {
+            let next_day = self.dom.next_from(now.day());
+            if next_day > now.day() && next_day <= 28 {
+                return self.next_date(now.with_day(next_day).unwrap());
+            }
+            return self.next_date(now + Duration::days(1));
+        }
+
+        /*
+        let mut future = now.date();
+        let weekday = future.weekday().num_days_from_sunday();
+        if !self.dow.contains(weekday) {
+            let delta = self.dow.next_from(weekday);
+            let delta = Duration::days((weekday - 6 + delta) as i64);
+            future = future + delta;
+        }*/
+
+        if now <= Local::now().date() && self.date_matters() {
+            return self.next_date(now + Duration::days(1));
+        }
+
+        return now;
     }
 
-    pub fn is_correct_day(&self) -> bool {
-        let now = Local::now();
-
-        let correct_month = match &self.month {
-            CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.month())),
-        };
-
-        let correct_dow = match &self.dow {
-            CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.weekday().num_days_from_sunday())),
-        };
-
-        let correct_dom = match &self.dom {
-            CronInterval::Every => true,
-            CronInterval::Multiple(v) => v.contains(&(now.day())),
-        };
-
-        return correct_month && correct_dow && correct_dom;
+    fn next_hour(&self, now: u32) -> u32 {
+        if !self.hour.contains(now) {
+            let next_hour = self.hour.next_from(now);
+            if next_hour <= now {
+                return self.next_hour((now + 1) % 24);
+            }
+            return next_hour;
+        } else if self.is_hourly() {
+            return (now + 1) % 24;
+        }
+        return now;
     }
 
-    fn next_day(target: u32) {}
+    fn next_time(&self, now: DateTime<Local>) -> DateTime<Local> {
+        let hour = self.next_hour(now.hour());
+
+        let mut now = now.with_hour(hour).unwrap();
+
+        let mut minute = now.minute();
+        while !self.minute.contains(minute) {
+            let next_minute = self.minute.next_from(now.minute());
+            if next_minute <= minute {
+                now = now + Duration::hours(1);
+                minute = next_minute;
+            }
+            minute = minute + 1;
+        }
+
+        return now.with_minute(minute).unwrap();
+    }
 }
 
 fn main() {
@@ -164,21 +144,16 @@ fn main() {
     if let Ok(crontab) = read_crontab(&args.config_path) {
         let crontab = parse_crontab(&crontab);
 
-        /*
-        let now = Local::now();
-        println!("{}", now);
-        */
         let mut handles = Vec::new();
         for entry in crontab {
             handles.push(spawn_entry(&entry));
+            sleep(Duration::milliseconds(100).to_std().unwrap());
         }
 
         for child in handles {
-
             match child.join() {
                 Ok(_) => continue,
-                Err(_) => continue,
-
+                Err(e) => continue, //println!("{:?}", e),
             }
         }
 
@@ -224,7 +199,7 @@ fn read_crontab(path: &String) -> std::io::Result<String> {
 
 fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
     let entry = (*entry).clone();
-    thread::spawn(move || loop {
+    thread::spawn(move || {
         if entry.startup {
             let output = Command::new("/bin/sh")
                 .arg("-c")
@@ -233,13 +208,12 @@ fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
                 .expect("failed to execute process");
             //println!("{}", String::from_utf8(output.stdout).unwrap());
             //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
-            break;
+            //break;
         }
-        let next_time = entry.next_attempt();
-        let future = Local::now() + Duration::seconds(next_time as i64);
+        let future = entry.next_attempt(Local::now() + Duration::minutes(1));
         println!("Scheduling: `{}` for {}", entry.cmd, future);
-        let t = Duration::seconds(next_time as i64).to_std().unwrap();
-        sleep(t);
+        let t = future - Local::now();
+        //sleep(t.to_std().unwrap());
 
         let output = Command::new("/bin/sh")
             .arg("-c")

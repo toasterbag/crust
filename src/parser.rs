@@ -3,7 +3,7 @@ use crate::*;
 pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
     let mut entries = Vec::new();
     for (line, entry) in crontab.lines().enumerate() {
-        let mut entry = entry.trim();
+        let mut entry = entry.trim().to_owned();
         // Remove all comments
         if entry.starts_with("#") || entry.is_empty() {
             //println!("Comment: {}", entry);
@@ -23,11 +23,10 @@ pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
                 );
                 std::process::exit(1);
             }
-            let entry = parse_special_expression(entry, line);
-            return parse_crontab(&entry);
+            entry = parse_special_expression(&entry, line);
         }
 
-        // println!("{}", entry);
+        //println!("{}", entry);
 
         let mut intervals = Vec::with_capacity(5);
         for (index, expr) in entry.split_whitespace().take(5).enumerate() {
@@ -54,11 +53,11 @@ pub fn parse_crontab(crontab: &String) -> Vec<CronEntry> {
         let str_vec: Vec<&str> = entry.split_whitespace().skip(5).collect();
 
         let e = CronEntry {
-            minute: intervals[0].clone(),
-            hour: intervals[1].clone(),
-            dom: intervals[2].clone(),
-            month: intervals[3].clone(),
-            dow: intervals[4].clone(),
+            minute: CronExpr(CronUnit::Minute, intervals[0].clone()),
+            hour: CronExpr(CronUnit::Hour, intervals[1].clone()),
+            dom: CronExpr(CronUnit::DayOfMonth, intervals[2].clone()),
+            month: CronExpr(CronUnit::Month, intervals[3].clone()),
+            dow: CronExpr(CronUnit::DayOfWeek, intervals[4].clone()),
             startup: false,
             cmd: str_vec.join(" "),
         };
