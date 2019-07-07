@@ -203,7 +203,7 @@ fn main() {
 
 fn gen_args() -> Args {
     let matches = App::new("Crust")
-        .version("0.1.0")
+        .version("0.2.0")
         .author("Karl David Hedgren. <david@davebay.net>")
         .about("rust + cron = crust!")
         .arg(
@@ -211,6 +211,7 @@ fn gen_args() -> Args {
                 .short("c")
                 .long("crontab")
                 .help("Use crontab file at PATH")
+                .value_name("PATH")
                 .takes_value(true)
                 .default_value("$XDG_CONFIG_HOME/crontab"),
         )
