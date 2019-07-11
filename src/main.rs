@@ -1,17 +1,21 @@
 #[macro_use(quickcheck)]
-
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
 use std::process::Command;
 use std::thread;
 
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::sleep;
 use std::thread::JoinHandle;
 
 use chrono::prelude::*;
 use chrono::Duration;
 use clap::{App, Arg};
+
+use std::collections::HashMap;
+
+use crossbeam_channel::unbounded;
+use notify::{event::EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 mod parser;
 use parser::parse_crontab;
@@ -166,7 +170,68 @@ impl CronEntry {
 
         return now.with_second(0).unwrap().with_nanosecond(0).unwrap();
     }
+}
 
+pub enum Message {
+    Quit,
+}
+pub struct CronJob {
+    entry: CronEntry,
+    handle: JoinHandle<()>,
+    tx: Sender<Message>,
+}
+
+impl CronJob {
+    pub fn id(&self) -> &String {
+        &self.entry.cmd
+    }
+    pub fn cancel(&self) {
+        self.tx.send(Message::Quit).unwrap();
+    }
+}
+
+pub struct CronScheduler {
+    cron_path: String,
+    jobs: HashMap<String, CronJob>,
+}
+
+impl CronScheduler {
+    pub fn new(cron_path: String) -> CronScheduler {
+        CronScheduler {
+            cron_path,
+            jobs: HashMap::new(),
+        }
+    }
+
+    pub fn read_crontab(&mut self) -> std::io::Result<()> {
+        let mut crontab_file = File::open(&self.cron_path)?;
+        let mut crontab_string = String::new();
+        crontab_file.read_to_string(&mut crontab_string)?;
+
+        let crontab = parse_crontab(&crontab_string);
+        for entry in crontab {
+            self.start_job(entry);
+            sleep(Duration::milliseconds(100).to_std().unwrap());
+        }
+        return Ok(());
+    }
+
+    pub fn start_job(&mut self, entry: CronEntry) {
+        let (tx, rx) = channel();
+        let cronjob = CronJob {
+            handle: spawn_job(&entry, rx),
+            entry,
+            tx,
+        };
+        self.jobs.insert(cronjob.id().clone(), cronjob);
+    }
+
+    pub fn clear(&mut self) {
+        for job in self.jobs.values() {
+            job.cancel();
+        }
+        self.jobs.clear();
+    }
 }
 
 fn main() {
@@ -182,28 +247,12 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Ok(crontab) = read_crontab(&args.crontab_path) {
-        let crontab = parse_crontab(&crontab);
-
-        let mut handles = Vec::new();
-        for entry in crontab {
-            handles.push(spawn_entry(&entry));
-            sleep(Duration::milliseconds(100).to_std().unwrap());
-        }
-
-        for child in handles {
-            match child.join() {
-                Ok(_) => continue,
-                Err(e) => continue, //println!("{:?}", e),
-            }
-        }
-    }
-
+    start_cronjobs(args.crontab_path);
 }
 
 fn gen_args() -> Args {
     let matches = App::new("Crust")
-        .version("0.2.1")
+        .version("0.3.0")
         .author("Karl David Hedgren. <david@davebay.net>")
         .about("rust + cron = crust!")
         .arg(
@@ -233,27 +282,44 @@ fn gen_args() -> Args {
         crontab_path: String::from(crontab_path),
         edit_flag: matches.is_present("edit"),
     }
-
 }
 
-fn read_crontab(path: &String) -> std::io::Result<String> {
-    let mut crontab_file = File::open(&path)?;
-    let mut crontab_string = String::new();
-    crontab_file.read_to_string(&mut crontab_string)?;
-    return Ok(crontab_string);
+fn start_cronjobs(cron_path: String) {
+    let mut scheduler = CronScheduler::new(cron_path.clone());
+    match scheduler.read_crontab() {
+        Err(_) => panic!("Failed to read crontab!"),
+        _ => {}
+    };
+
+    let (tx, rx) = unbounded();
+    let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::seconds(2).to_std().unwrap())
+        .expect("Could not initialize watcher!");
+    watcher
+        .watch(&cron_path, RecursiveMode::NonRecursive)
+        .expect("Could not start watcher, does the file exist?");
+
+    loop {
+        match rx.recv() {
+            Ok(_) => {
+                scheduler.clear();
+                scheduler.read_crontab().expect("Could not read crontab");
+            }
+            Err(err) => println!("watch error: {:?}", err),
+        };
+    }
 }
 
-fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
+fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
     let entry = (*entry).clone();
     thread::spawn(move || loop {
         if entry.startup {
-            let output = Command::new("/bin/sh")
+            Command::new("/bin/sh")
                 .arg("-c")
                 .arg(&entry.cmd)
-                .output()
+                .spawn()
                 .expect("failed to execute process");
-            println!("{}", String::from_utf8(output.stdout).unwrap());
-            eprintln!("{}", String::from_utf8(output.stderr).unwrap());
+            //println!("{}", String::from_utf8(output.stdout).unwrap());
+            //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
             break;
         }
         let future = entry.next_execution(Local::now() + Duration::minutes(1));
@@ -261,13 +327,20 @@ fn spawn_entry(entry: &CronEntry) -> JoinHandle<()> {
         let t = future - Local::now();
         sleep(t.to_std().unwrap());
 
-        let output = Command::new("/bin/sh")
+        // Check if this is a stale thread
+        if let Ok(msg) = rx.try_recv() {
+            match msg {
+                Message::Quit => return,
+            }
+        }
+
+        Command::new("/bin/sh")
             .arg("-c")
             .arg(&entry.cmd)
-            .output()
+            .spawn()
             .expect("failed to execute process");
-        println!("{}", String::from_utf8(output.stdout).unwrap());
-        eprintln!("{}", String::from_utf8(output.stderr).unwrap());
+        //println!("{}", String::from_utf8(output.stdout).unwrap());
+        //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
     })
 }
 
