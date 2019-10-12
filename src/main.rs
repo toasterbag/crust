@@ -82,7 +82,7 @@ impl CronEntry {
                 now = now.with_minute(minute).unwrap();
             }
 
-            if self.hour.is_multiple() && !self.minute.contains(now.minute()) {
+            if self.hour.is_multiple() && !self.hour.contains(now.hour()) {
                 let hour = self.hour.next_from(now.hour());
                 if hour < now.hour() {
                     now = now.with_hour(hour).unwrap().with_minute(0).unwrap();
@@ -90,6 +90,7 @@ impl CronEntry {
                     continue;
                 }
                 now = now.with_hour(hour).unwrap().with_minute(0).unwrap();
+                println!("{:?}", now);
                 continue;
             }
 
@@ -328,6 +329,12 @@ fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
         }
         let future = entry.next_execution(Local::now() + Duration::minutes(1));
         println!("Scheduling: `{}` for {}", entry.cmd, future);
+        println!(
+            "{:#?}",
+            entry
+                .hour
+                .next_from((Local::now() + Duration::minutes(1)).hour())
+        );
         let t = future - Local::now();
         sleep(t.to_std().unwrap());
 
@@ -346,26 +353,4 @@ fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
         //println!("{}", String::from_utf8(output.stdout).unwrap());
         //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn leap_year() {
-        assert!(is_leap_year(1804));
-        assert!(is_leap_year(1904));
-        assert!(is_leap_year(2004));
-        assert!(is_leap_year(2012));
-        assert!(is_leap_year(2016));
-        assert!(is_leap_year(2020));
-        assert!(is_leap_year(2316));
-
-        assert!(!is_leap_year(1823));
-        assert!(!is_leap_year(1825));
-        assert!(!is_leap_year(2001));
-        assert!(!is_leap_year(2002));
-        assert!(!is_leap_year(1999));
-        assert!(!is_leap_year(2000));
-    }
 }
