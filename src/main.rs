@@ -238,10 +238,6 @@ fn main() {
     let args = gen_args();
 
     if args.edit_flag {
-        if std::env::var("EDITOR").is_err() {
-            println!("Error reading $EDITOR, make sure it is set correctly and try again");
-            std::process::exit(1);
-        }
         let cmd = vec!["$EDITOR", &args.crontab_path].join(" ");
         Command::new("/bin/sh")
             .arg("-c")
@@ -256,9 +252,9 @@ fn main() {
 
 fn gen_args() -> Args {
     let matches = App::new("Crust")
-        .version("0.3.1")
+        .version("0.3.0")
         .author("Karl David Hedgren. <david@davebay.net>")
-        .about("rust + cron = crust!\n A cron manager in rust!")
+        .about("rust + cron = crust!")
         .arg(
             Arg::with_name("crontab")
                 .short("c")
