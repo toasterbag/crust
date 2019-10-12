@@ -10,6 +10,7 @@ use std::thread::JoinHandle;
 
 use chrono::prelude::*;
 use chrono::Duration;
+#[macro_use(clap)]
 use clap::{App, Arg};
 
 use std::collections::HashMap;
@@ -248,10 +249,10 @@ fn main() {
 }
 
 fn gen_args() -> Args {
-    let matches = App::new("Crust")
-        .version("0.3.1")
-        .author("Karl David Hedgren. <david@davebay.net>")
-        .about("rust + cron = crust!\n A cron manager in rust!")
+    let matches = App::new(clap::crate_name!())
+        .version(clap::crate_version!())
+        .author(clap::crate_authors!())
+        .about(clap::crate_description!())
         .arg(
             Arg::with_name("crontab")
                 .short("c")
