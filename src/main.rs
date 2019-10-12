@@ -326,12 +326,6 @@ fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
         }
         let future = entry.next_execution(Local::now() + Duration::minutes(1));
         println!("Scheduling: `{}` for {}", entry.cmd, future);
-        println!(
-            "{:#?}",
-            entry
-                .hour
-                .next_from((Local::now() + Duration::minutes(1)).hour())
-        );
         let t = future - Local::now();
         sleep(t.to_std().unwrap());
 
