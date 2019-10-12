@@ -90,7 +90,6 @@ impl CronEntry {
                     continue;
                 }
                 now = now.with_hour(hour).unwrap().with_minute(0).unwrap();
-                println!("{:?}", now);
                 continue;
             }
 
@@ -323,8 +322,6 @@ fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
                 .arg(&entry.cmd)
                 .spawn()
                 .expect("failed to execute process");
-            //println!("{}", String::from_utf8(output.stdout).unwrap());
-            //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
             break;
         }
         let future = entry.next_execution(Local::now() + Duration::minutes(1));
@@ -350,7 +347,5 @@ fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
             .arg(&entry.cmd)
             .spawn()
             .expect("failed to execute process");
-        //println!("{}", String::from_utf8(output.stdout).unwrap());
-        //eprintln!("{}", String::from_utf8(output.stderr).unwrap());
     })
 }
