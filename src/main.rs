@@ -14,9 +14,6 @@ use clap::{App, Arg};
 
 use std::collections::HashMap;
 
-use crossbeam_channel::unbounded;
-use notify::{event::EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-
 mod parser;
 use parser::parse_crontab;
 
@@ -177,7 +174,6 @@ pub enum Message {
 }
 pub struct CronJob {
     entry: CronEntry,
-    handle: JoinHandle<()>,
     tx: Sender<Message>,
 }
 
@@ -218,11 +214,8 @@ impl CronScheduler {
 
     pub fn start_job(&mut self, entry: CronEntry) {
         let (tx, rx) = channel();
-        let cronjob = CronJob {
-            handle: spawn_job(&entry, rx),
-            entry,
-            tx,
-        };
+        spawn_job(&entry, rx);
+        let cronjob = CronJob { entry, tx };
         self.jobs.insert(cronjob.id().clone(), cronjob);
     }
 
@@ -294,23 +287,7 @@ fn start_cronjobs(cron_path: String) {
         Err(_) => panic!("Failed to read crontab!"),
         _ => {}
     };
-
-    let (tx, rx) = unbounded();
-    let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::seconds(2).to_std().unwrap())
-        .expect("Could not initialize watcher!");
-    watcher
-        .watch(&cron_path, RecursiveMode::NonRecursive)
-        .expect("Could not start watcher, does the file exist?");
-
-    loop {
-        match rx.recv() {
-            Ok(_) => {
-                scheduler.clear();
-                scheduler.read_crontab().expect("Could not read crontab");
-            }
-            Err(err) => println!("watch error: {:?}", err),
-        };
-    }
+    loop {}
 }
 
 fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
