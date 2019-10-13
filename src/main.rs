@@ -246,6 +246,12 @@ fn main() {
     }
 
     start_cronjobs(args.crontab_path);
+
+    // Without sleeping the program will grab as much resources as it can
+    // leading to 100% cpu usage..
+    loop {
+        sleep(Duration::seconds(10).to_std().unwrap());
+    }
 }
 
 fn gen_args() -> Args {
@@ -288,7 +294,6 @@ fn start_cronjobs(cron_path: String) {
         Err(_) => panic!("Failed to read crontab!"),
         _ => {}
     };
-    loop {}
 }
 
 fn spawn_job(entry: &CronEntry, rx: Receiver<Message>) -> JoinHandle<()> {
