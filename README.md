@@ -11,7 +11,7 @@ Simply clone the repository and run `cargo build --release` in the project direc
 The executable will then be built to `./target/release/crust`.
 
 # Using
-Currently does not currently (and probably never will) run as a deamon on its own.
+Currently does not (and probably never will) run as a deamon on its own.
 Either run it using a service manager such as systemd or put it in a user startup script.
 The default crontab path is $HOME/.config/crontab
 
